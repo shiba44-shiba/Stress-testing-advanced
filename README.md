@@ -1,77 +1,74 @@
-# stress_test.py — Staged HTTP Load / Stress Tester
+# stress_test.py — Advanced Staged HTTP Load / Stress Tester
 
 A single-file, **dependency-free** (Python standard library only) load generator
-for finding out how much traffic your website can take before it starts to
-degrade. It ramps traffic through configurable **stages** and reports latency
-percentiles, throughput, and error rates.
+for finding out how much traffic your website can take before it degrades. It
+ramps traffic through configurable **stages** and reports latency percentiles,
+throughput, and error rates — with a self-contained HTML report.
 
 Runs anywhere Python 3.8+ runs — including a **Chromebook** Linux container — with
 no `pip install`.
 
 > **This is a load tester, not an attack tool.** It identifies itself honestly,
-> does not spoof source addresses, does not rotate proxies or evade defenses, and
-> **refuses to run against any host that isn't on your allowlist.** Only test
-> sites you own or are explicitly authorized to test. Load testing someone else's
-> service without permission is illegal in most places.
+> does not spoof source addresses, does not rotate proxies, and does not try to
+> evade rate limits or WAFs. It **refuses to run against any host not on your
+> allowlist.** Only test sites you own or are explicitly authorized to test.
+> Load testing someone else's service without permission is illegal in most
+> places. (See "Why you get blocked" below — that's the CDN working, not the
+> tool being weak.)
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Your site is already in allowlist.txt (script.ceo). To test another host,
-#    add it there first.
-
-# 2. Run the default staged test:
-python3 stress_test.py https://script.ceo/ --i-own-this
-
-# or use the launcher:
-./run.sh https://script.ceo/ standard
+python3 stress_test.py https://script.ceo/ --i-own-this            # default staged run
+python3 stress_test.py https://script.ceo/ --i-own-this --profile heavy --processes 4
+./run.sh https://script.ceo/ heavy
 ```
 
-You'll see a live per-second readout, then a report like:
-
-```
-stage            reqs      rps     ok%     p50     p95      p99    errs
-------------------------------------------------------------------------------
-warmup           2157     1077   100.0       4       7        8       0
-ramp             3219      813   100.0       8      12       31       0
-spike            2247      940   100.0       7      49       88       0
-```
+You get a live readout, then a report, then (optionally) HTML/JSON files.
 
 ---
 
-## Stages
+## What makes it "advanced"
 
-The tool runs a sequence of stages. Each stage holds a fixed number of
-concurrent **workers** (in-flight requests) for a **duration**, so you can watch
-latency and errors climb as load increases and find your breaking point.
+- **HTTP keep-alive with real response parsing** (Content-Length *and* chunked).
+  Connections are reused, which is where most of the throughput comes from —
+  the same trick `wrk` uses. Disable with `--no-keepalive`.
+- **Multiprocess mode** (`--processes N`) drives load from every CPU core on your
+  machine, still as one honest source.
+- **Open-loop rate mode** (`--rate R --duration S`) with **coordinated-omission
+  correction**: requests are scheduled at a fixed rate and latency is measured
+  from each request's *intended* send time, not just when a free worker fired it.
+  This is the honest way to measure tail latency — most homemade testers get it
+  wrong and flatter the results.
+- **Weighted multi-endpoint mix** (`--path PATH:WEIGHT`, repeatable) so you test
+  realistic traffic across several routes, not just `/`.
+- **Self-contained HTML report** (`--html report.html`) with a throughput/latency
+  timeline chart and a per-stage p95 bar chart — no internet or libraries needed
+  to open it. Plus `--report results.json` for the raw data.
 
-Built-in profiles (`--profile`):
+---
 
-| profile    | shape                                              | peak concurrency |
-|------------|----------------------------------------------------|------------------|
-| `light`    | warmup → ramp → sustained → cooldown               | 40               |
-| `standard` | + a spike stage (default)                          | 400              |
-| `heavy`    | long sustained + a big held spike                  | 1200             |
+## Stages & profiles
 
-### Custom stages
+Each stage holds a fixed number of concurrent **workers** for a **duration**, so
+you watch latency and errors climb as load increases and find the breaking point.
 
-Define your own in a JSON file (see `stages.example.json`):
+| profile    | shape                                   | peak concurrency |
+|------------|-----------------------------------------|------------------|
+| `light`    | warmup → ramp → sustained → cooldown     | 40               |
+| `standard` | + a spike stage (default)                | 400              |
+| `heavy`    | long sustained + a big held spike        | 1200             |
+
+Custom stages via JSON (`stages.example.json`):
 
 ```json
-{
-  "stages": [
-    { "name": "warmup",    "workers": 10,  "duration": 15 },
-    { "name": "sustained", "workers": 600, "duration": 45, "rps": 4000 },
-    { "name": "spike",     "workers": 1500,"duration": 30 }
-  ]
-}
+{ "stages": [
+  { "name": "sustained", "workers": 600, "duration": 45, "rps": 4000 },
+  { "name": "spike",     "workers": 1500,"duration": 30 }
+]}
 ```
-
-- `workers` — max concurrent in-flight requests
-- `duration` — seconds
-- `rps` — optional per-stage request-rate cap (omit for uncapped)
 
 ```bash
 python3 stress_test.py https://script.ceo/ --i-own-this --config stages.example.json
@@ -85,38 +82,49 @@ python3 stress_test.py https://script.ceo/ --i-own-this --config stages.example.
 --i-own-this          Required. Confirms you're authorized to test the target.
 --profile NAME        light | standard | heavy   (default: standard)
 --config FILE         Custom stage definitions (JSON).
+--processes N         Worker processes across CPU cores (default 1).
+--rate R              Open-loop target requests/sec (needs --duration).
+--duration S          Duration for --rate mode (seconds).
+--max-inflight N      Cap on concurrent in-flight requests in --rate mode.
+--path PATH:WEIGHT    Weighted endpoint, repeatable (e.g. --path /api:3 --path /:1).
 --method METHOD       GET (default), POST, HEAD, ...
 --header 'K: V'       Add a request header (repeatable).
 --body TEXT           Request body for POST/PUT.
+--no-keepalive        Fresh connection per request (default: reuse).
 --timeout SECONDS     Per-request timeout (default 15).
 --user-agent STR      Override the User-Agent.
---report FILE         Write a full JSON report.
+--report FILE         Write a JSON report.
+--html FILE           Write a self-contained HTML report with charts.
 --quiet               Hide the live progress line.
 ```
 
-Press **Ctrl+C** any time to stop early — you still get a report for the stages
-that ran.
+Press **Ctrl+C** to stop early — you still get a report for the stages that ran.
 
 ---
 
-## How to read the results
+## Reading the results
 
-- **ok%** — share of requests returning 2xx/3xx. When this drops, you've found
-  where the site starts failing under load.
-- **p95 / p99 latency** — the slow tail. Rising p95 well before errors appear is
-  your early warning that the site is straining.
-- **connection_failures** — timeouts / resets. These usually mean you've hit a
-  connection or rate limit (your host's, or your own network's).
+- **ok%** — share of 2xx/3xx responses. When it drops, you've found where the
+  site starts failing under load.
+- **p95 / p99 latency** — the slow tail. Rising p95 before errors appear is your
+  early warning that the site is straining.
+- **errs** — HTTP 4xx/5xx plus connection failures (timeouts/resets), which
+  usually mean you've hit a connection or rate limit.
 
-### A note on Netlify / CDN-hosted sites
+---
 
-`script.ceo` is on Netlify, which serves static assets from a global CDN with its
-own rate limiting and DDoS protection. From a single Chromebook you're mostly
-measuring **the CDN edge and your local network**, not an origin server — so
-expect it to absorb a lot, and expect Netlify to start returning `429`/`403` or
-resetting connections rather than falling over. That's the CDN doing its job. To
-stress *application* behavior, point the tester at a dynamic endpoint (a function
-route) rather than a static page.
+## Why you get blocked (Netlify / CDN targets)
+
+`script.ceo` is on Netlify, whose global CDN is *built* to absorb floods and rate-
+limit abusive sources. From a single machine you're mostly measuring **the CDN
+edge and your own network**, and you should expect `429`/`403`/resets under a
+spike — that's the protection doing its job, not a weakness in this tool. There is
+no honest single-source tool that "gets past" that; the things that do are
+botnets, which this deliberately is not.
+
+To measure your **application** (the part you can actually tune), point it at a
+dynamic route — e.g. a Netlify Function endpoint — with `--path`, rather than a
+static, cached page.
 
 ---
 
