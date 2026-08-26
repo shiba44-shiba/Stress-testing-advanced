@@ -1,0 +1,10 @@
+{
+  "stages": [
+    { "name": "warmup",    "workers": 10,  "duration": 15 },
+    { "name": "ramp-1",    "workers": 100, "duration": 20 },
+    { "name": "ramp-2",    "workers": 300, "duration": 20 },
+    { "name": "sustained", "workers": 600, "duration": 45, "rps": 4000 },
+    { "name": "spike",     "workers": 1500,"duration": 30 },
+    { "name": "cooldown",  "workers": 25,  "duration": 10 }
+  ]
+}
