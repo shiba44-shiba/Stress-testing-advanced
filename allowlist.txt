@@ -1,0 +1,7 @@
+# Authorized load-test targets — one host per line.
+# The tester REFUSES to run against any host not listed here (localhost and
+# private IP ranges are always allowed). Subdomains of a listed apex are allowed
+# too (e.g. www.script.ceo is covered by script.ceo).
+#
+# Only add hosts you own or have explicit written permission to test.
+script.ceo
