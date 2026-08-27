@@ -693,6 +693,54 @@ def report_capacity(summaries):
               f"({best['workers']} concurrent, p95 {best['latency_ms']['p95']:.0f}ms).")
 
 
+def run_find_capacity(target, cfg, processes, start, step, step_seconds,
+                      max_rate, slo_p95, slo_p99, slo_err):
+    """Auto-ramp the open-loop request rate step by step until the target breaches
+    an SLO, then report the highest rate it served healthily. This is a capacity
+    *search*, not a sustained flood: each step runs briefly and it stops the
+    moment the site starts to degrade."""
+    print("Capacity search: ramping request rate until an SLO breaks.")
+    print(f"  start {start:.0f}/s, +{step:.0f}/s each {step_seconds:.0f}s, "
+          f"cap {max_rate:.0f}/s")
+    print(f"  SLO: p95<{slo_p95:.0f}ms p99<{slo_p99:.0f}ms errors<{slo_err:.1f}%\n")
+
+    summaries = []
+    last_healthy = None
+    rate = start
+    while rate <= max_rate:
+        stage = {"name": f"{int(rate)}rps", "workers": 0, "duration": step_seconds}
+        s = run_stage(target, stage, cfg, processes, rate)
+        summaries.append(s)
+        err_pct = 100.0 - s["success_rate_pct"]
+        L = s["latency_ms"]
+        breach = []
+        if L["p95"] > slo_p95:
+            breach.append(f"p95 {L['p95']:.0f}>{slo_p95:.0f}ms")
+        if L["p99"] > slo_p99:
+            breach.append(f"p99 {L['p99']:.0f}>{slo_p99:.0f}ms")
+        if err_pct > slo_err:
+            breach.append(f"errors {err_pct:.1f}>{slo_err:.1f}%")
+        status = "BREACH " + ", ".join(breach) if breach else "ok"
+        print(f"  {int(rate):>7}/s target | served {s['throughput_rps']:>7.0f}/s | "
+              f"p95 {L['p95']:>6.0f}ms | p99 {L['p99']:>6.0f}ms | "
+              f"err {err_pct:>5.1f}% | {status}")
+        if breach:
+            break
+        last_healthy = s
+        rate += step
+
+    print()
+    if last_healthy is None:
+        print("Capacity: the very first step already breached the SLO — lower "
+              "--start-rate, or the site is degrading immediately.")
+    else:
+        L = last_healthy["latency_ms"]
+        print(f"CAPACITY: ~{last_healthy['throughput_rps']:.0f} req/s sustained "
+              f"within SLO (target {last_healthy['stage']}, "
+              f"p95 {L['p95']:.0f}ms, p99 {L['p99']:.0f}ms).")
+    return summaries
+
+
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
@@ -761,6 +809,17 @@ def main():
                     help="Fail the run (exit 1) if any stage's p99 latency (ms) exceeds this.")
     ap.add_argument("--slo-error-pct", type=float, default=0,
                     help="Fail the run (exit 1) if any stage's error rate (%) exceeds this.")
+    ap.add_argument("--find-capacity", action="store_true",
+                    help="Auto-ramp the request rate until an SLO breaks and report "
+                         "the highest healthy req/s (capacity search).")
+    ap.add_argument("--start-rate", type=float, default=200,
+                    help="find-capacity: starting request rate (req/s).")
+    ap.add_argument("--step-rate", type=float, default=200,
+                    help="find-capacity: rate increase per step (req/s).")
+    ap.add_argument("--step-seconds", type=float, default=10,
+                    help="find-capacity: duration of each step (seconds).")
+    ap.add_argument("--max-rate", type=float, default=20000,
+                    help="find-capacity: stop ramping at this rate (req/s).")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -802,6 +861,27 @@ def main():
     }
     if args.quiet:
         os.environ["STRESS_QUIET"] = "1"
+
+    # Capacity-search mode short-circuits the normal staged run.
+    if args.find_capacity:
+        processes = max(1, args.processes)
+        print(f"Target : {args.url}  (host {target['host']}, authorized)")
+        print(f"Mode   : find-capacity | {processes} process(es) | "
+              f"keepalive {'on' if cfg['keepalive'] else 'off'}"
+              + (f" | pipeline {cfg['pipeline']}" if cfg['pipeline'] > 1 else "") + "\n")
+        slo_p95 = args.slo_p95 or 1000.0
+        slo_p99 = args.slo_p99 or 2000.0
+        slo_err = args.slo_error_pct or 2.0
+        summaries = run_find_capacity(target, cfg, processes, args.start_rate,
+                                      args.step_rate, args.step_seconds,
+                                      args.max_rate, slo_p95, slo_p99, slo_err)
+        meta = {"processes": processes, "mode": "find-capacity"}
+        if summaries and args.csv:
+            write_csv(args.csv, summaries); print(f"CSV time-series -> {args.csv}")
+        if summaries and args.html:
+            write_html(args.html, args.url, "find-capacity", summaries, meta)
+            print(f"HTML report -> {args.html}")
+        return 0
 
     stages, profile_name = load_stages(args)
     processes = max(1, args.processes)

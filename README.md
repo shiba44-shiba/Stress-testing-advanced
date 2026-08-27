@@ -104,10 +104,42 @@ python3 stress_test.py https://script.ceo/ --i-own-this --config stages.example.
 --slo-p95 MS          Fail the run (exit 1) if any stage's p95 latency exceeds MS.
 --slo-p99 MS          Fail the run (exit 1) if any stage's p99 latency exceeds MS.
 --slo-error-pct PCT   Fail the run (exit 1) if any stage's error rate exceeds PCT.
+--find-capacity       Auto-ramp the rate until an SLO breaks; report max healthy req/s.
+--start-rate R        find-capacity: starting rate (default 200).
+--step-rate R         find-capacity: rate increase per step (default 200).
+--step-seconds S      find-capacity: seconds per step (default 10).
+--max-rate R          find-capacity: stop ramping at this rate (default 20000).
 --quiet               Hide the live progress line.
 ```
 
 Press **Ctrl+C** to stop early — you still get a report for the stages that ran.
+
+---
+
+## Auto capacity finder (`--find-capacity`)
+
+The most advanced mode: it ramps the request rate step by step, watches latency
+and errors, and **stops automatically at the rate where your site breaks**,
+reporting the highest healthy throughput. Hands-off — you get one number.
+
+```bash
+python3 stress_test.py https://mybox.example/api/route --i-own-this \
+    --find-capacity --start-rate 200 --step-rate 200 --step-seconds 10 \
+    --slo-p99 800 --slo-error-pct 1 --processes 8 --pipeline 16 --csv ramp.csv
+```
+
+Output looks like:
+
+```
+    200/s target | served  195/s | p95   40ms | p99   70ms | err 0.0% | ok
+    400/s target | served  392/s | p95   55ms | p99  120ms | err 0.0% | ok
+    600/s target | served  540/s | p95  610ms | p99  980ms | err 1.8% | BREACH p99 980>800ms
+CAPACITY: ~392 req/s sustained within SLO (p95 55ms, p99 120ms).
+```
+
+Tunables: `--start-rate`, `--step-rate`, `--step-seconds`, `--max-rate`, and the
+same `--slo-*` thresholds define "broken." It's a capacity *search* — each step
+is short and it halts the moment things degrade, so it never sits there flooding.
 
 ---
 
