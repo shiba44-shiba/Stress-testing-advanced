@@ -3,3 +3,9 @@ stress_test_tool.zip
 results.json
 *.pyc
 __pycache__/
+stress-test-tool-v2.0.zip
+*.zip
+timed-*.csv
+api-results.csv
+*.csv
+report.html
