@@ -37,6 +37,9 @@ You get a live readout, then a report, then (optionally) HTML/JSON files.
   the same trick `wrk` uses. Disable with `--no-keepalive`.
 - **Multiprocess mode** (`--processes N`) drives load from every CPU core on your
   machine, still as one honest source.
+- **HTTP pipelining** (`--pipeline N`) fires N requests per connection before
+  reading responses — a large per-socket throughput multiplier on keep-alive
+  servers (roughly 5-7x in local testing).
 - **Open-loop rate mode** (`--rate R --duration S`) with **coordinated-omission
   correction**: requests are scheduled at a fixed rate and latency is measured
   from each request's *intended* send time, not just when a free worker fired it.
@@ -60,6 +63,7 @@ you watch latency and errors climb as load increases and find the breaking point
 | `light`    | warmup → ramp → sustained → cooldown     | 40               |
 | `standard` | + a spike stage (default)                | 400              |
 | `heavy`    | long sustained + a big held spike        | 1200             |
+| `max`      | huge sustained + held 4000-worker spike  | 4000             |
 
 Custom stages via JSON (`stages.example.json`):
 
@@ -91,6 +95,7 @@ python3 stress_test.py https://script.ceo/ --i-own-this --config stages.example.
 --header 'K: V'       Add a request header (repeatable).
 --body TEXT           Request body for POST/PUT.
 --no-keepalive        Fresh connection per request (default: reuse).
+--pipeline N          HTTP/1.1 pipeline depth (requests/connection, default 1).
 --timeout SECONDS     Per-request timeout (default 15).
 --user-agent STR      Override the User-Agent.
 --report FILE         Write a JSON report.

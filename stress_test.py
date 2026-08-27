@@ -70,6 +70,14 @@ PROFILES = {
         {"name": "hold-spike", "workers": 1200, "duration": 20},
         {"name": "cooldown",   "workers": 50,   "duration": 10},
     ],
+    "max": [
+        {"name": "warmup",     "workers": 50,   "duration": 15},
+        {"name": "ramp",       "workers": 400,  "duration": 25},
+        {"name": "sustained",  "workers": 1500, "duration": 40},
+        {"name": "spike",      "workers": 4000, "duration": 30},
+        {"name": "hold-spike", "workers": 4000, "duration": 30},
+        {"name": "cooldown",   "workers": 100,  "duration": 10},
+    ],
 }
 
 
@@ -294,20 +302,31 @@ async def closed_worker(target, acc, deadline, stop, cfg, rng):
     reader = writer = None
     paths = cfg["paths"]
     weights = cfg["weights"]
+    depth = max(1, cfg["pipeline"])          # HTTP pipelining depth
+    multi = len(paths) > 1
     while time.perf_counter() < deadline and not stop.value:
-        path = rng.choices(paths, weights)[0] if len(paths) > 1 else paths[0]
-        start = time.perf_counter()
         try:
             if writer is None:
                 reader, writer = await open_conn(target, cfg["timeout"])
-            req = build_request(cfg["method"], path, target["host"], cfg["ua"],
-                                cfg["headers"], cfg["body"], cfg["keepalive"])
-            writer.write(req)
+            # Build and send `depth` requests back-to-back on one connection,
+            # then read their responses in order (HTTP/1.1 pipelining). With
+            # depth=1 this is a plain one-at-a-time keep-alive loop.
+            sent, buf = [], b""
+            for _ in range(depth):
+                path = rng.choices(paths, weights)[0] if multi else paths[0]
+                buf += build_request(cfg["method"], path, target["host"], cfg["ua"],
+                                     cfg["headers"], cfg["body"], cfg["keepalive"])
+                sent.append(time.perf_counter())
+            writer.write(buf)
             await asyncio.wait_for(writer.drain(), cfg["timeout"])
-            status, nbytes, ka = await read_http_response(reader, cfg["method"], cfg["timeout"])
-            done = time.perf_counter()
-            acc.add(status, (done - start) * 1000.0, nbytes, done)
-            if not ka or not cfg["keepalive"]:
+            reuse = cfg["keepalive"]
+            for i in range(depth):
+                status, nbytes, ka = await read_http_response(
+                    reader, cfg["method"], cfg["timeout"])
+                done = time.perf_counter()
+                acc.add(status, (done - sent[i]) * 1000.0, nbytes, done)
+                reuse = reuse and ka
+            if not reuse:
                 _close(writer); reader = writer = None
         except Exception as exc:
             acc.add_error(classify_error(exc))
@@ -692,6 +711,10 @@ def main():
     ap.add_argument("--user-agent", default=DEFAULT_UA)
     ap.add_argument("--no-keepalive", action="store_true",
                     help="Open a fresh connection per request (default: reuse).")
+    ap.add_argument("--pipeline", type=int, default=1,
+                    help="HTTP/1.1 pipeline depth: requests sent per connection "
+                         "before reading responses (default 1). Higher = more "
+                         "throughput per socket on keep-alive servers.")
     ap.add_argument("--report", help="Write JSON report to this path.")
     ap.add_argument("--html", help="Write a self-contained HTML report.")
     ap.add_argument("--quiet", action="store_true")
@@ -731,7 +754,7 @@ def main():
         "timeout": args.timeout, "ua": args.user_agent, "method": args.method.upper(),
         "headers": extra_headers, "body": args.body.encode("utf-8") if args.body else b"",
         "keepalive": not args.no_keepalive, "paths": paths, "weights": weights,
-        "max_inflight": args.max_inflight,
+        "max_inflight": args.max_inflight, "pipeline": max(1, args.pipeline),
     }
     if args.quiet:
         os.environ["STRESS_QUIET"] = "1"
@@ -746,6 +769,7 @@ def main():
           f"{processes} process(es) | {mode}")
     print(f"Paths  : " + ", ".join(f"{p}(w{w})" for p, w in zip(paths, weights)))
     print(f"Keepalive: {'on' if cfg['keepalive'] else 'off'}"
+          + (f" | pipeline {cfg['pipeline']}" if cfg['pipeline'] > 1 else "")
           + (f" | rate {args.rate}/s" if args.rate else "") + "\n")
 
     stop_all = {"flag": False}
