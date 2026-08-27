@@ -391,7 +391,20 @@ def _close(writer):
 # --------------------------------------------------------------------------- #
 # Per-process stage runner (one event loop)
 # --------------------------------------------------------------------------- #
+def _try_install_uvloop():
+    """Use uvloop's faster event loop if it's installed. Returns True if active.
+    Pure speedup — a drop-in replacement for asyncio's loop, no behavior change."""
+    try:
+        import uvloop
+        uvloop.install()
+        return True
+    except Exception:
+        return False
+
+
 def run_stage_in_process(target, stage, cfg, workers, rate, seed, conn):
+    if cfg.get("uvloop"):
+        _try_install_uvloop()
     rng = random.Random(seed)
 
     class _Stop:
@@ -808,7 +821,7 @@ def main():
     ap.add_argument("--slo-p99", type=float, default=0,
                     help="Fail the run (exit 1) if any stage's p99 latency (ms) exceeds this.")
     ap.add_argument("--slo-error-pct", type=float, default=0,
-                    help="Fail the run (exit 1) if any stage's error rate (%) exceeds this.")
+                    help="Fail the run (exit 1) if any stage's error rate (percent) exceeds this.")
     ap.add_argument("--find-capacity", action="store_true",
                     help="Auto-ramp the request rate until an SLO breaks and report "
                          "the highest healthy req/s (capacity search).")
@@ -820,6 +833,9 @@ def main():
                     help="find-capacity: duration of each step (seconds).")
     ap.add_argument("--max-rate", type=float, default=20000,
                     help="find-capacity: stop ramping at this rate (req/s).")
+    ap.add_argument("--uvloop", action="store_true",
+                    help="Use the uvloop event loop if installed (pip install uvloop) "
+                         "for 2-4x higher throughput. Falls back to asyncio if missing.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -858,7 +874,15 @@ def main():
         "headers": extra_headers, "body": args.body.encode("utf-8") if args.body else b"",
         "keepalive": not args.no_keepalive, "paths": paths, "weights": weights,
         "max_inflight": args.max_inflight, "pipeline": max(1, args.pipeline),
+        "uvloop": args.uvloop,
     }
+    if args.uvloop:
+        try:
+            import uvloop  # noqa: F401
+            print("uvloop: enabled (faster event loop)")
+        except Exception:
+            print("uvloop: requested but not installed — run 'pip3 install uvloop'; "
+                  "using default asyncio for now")
     if args.quiet:
         os.environ["STRESS_QUIET"] = "1"
 

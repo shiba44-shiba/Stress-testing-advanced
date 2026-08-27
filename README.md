@@ -104,6 +104,7 @@ python3 stress_test.py https://script.ceo/ --i-own-this --config stages.example.
 --slo-p95 MS          Fail the run (exit 1) if any stage's p95 latency exceeds MS.
 --slo-p99 MS          Fail the run (exit 1) if any stage's p99 latency exceeds MS.
 --slo-error-pct PCT   Fail the run (exit 1) if any stage's error rate exceeds PCT.
+--uvloop              Use the uvloop event loop if installed (pip install uvloop) for 2-4x throughput.
 --find-capacity       Auto-ramp the rate until an SLO breaks; report max healthy req/s.
 --start-rate R        find-capacity: starting rate (default 200).
 --step-rate R         find-capacity: rate increase per step (default 200).
