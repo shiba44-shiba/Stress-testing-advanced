@@ -1,0 +1,91 @@
+====================================================================
+ stress_test.py — HTTP Load & Stress Tester — QUICK SETUP
+====================================================================
+
+A tool to measure how much traffic YOUR OWN website/API/server can
+handle. Standard-library Python — no installs needed.
+
+Only test servers you own or have written permission to test.
+Testing systems you don't control is illegal.
+
+--------------------------------------------------------------------
+ WHAT'S IN THIS PACKAGE
+--------------------------------------------------------------------
+  stress_test.py       The tool.
+  README.md            Full manual (everything).
+  allowlist.txt        Hosts you're allowed to test (edit this).
+  stages.example.json  Example custom-load config.
+  run.sh               Quick launcher.
+  api-load-test.sh     API-focused test (edit the top, then run).
+  timed-test.sh        Run at a set rate for a set time, with a timer.
+  INSTALL.txt          This file.
+
+--------------------------------------------------------------------
+ STEP 1 — GET PYTHON 3 (3.8 or newer)
+--------------------------------------------------------------------
+  macOS:      run   xcode-select --install
+  Linux:      sudo apt-get install -y python3
+  Chromebook: (Crostini Linux) same as Linux above
+  Windows:    install from https://python.org (check "Add to PATH")
+
+  Verify:     python3 --version
+
+--------------------------------------------------------------------
+ STEP 2 — UNZIP AND OPEN A TERMINAL IN THIS FOLDER
+--------------------------------------------------------------------
+  Unzip the package, then in a terminal:
+     cd path/to/stress_test_tool
+  (Tip: on macOS you can drag the folder onto the Terminal icon.)
+
+  Check it runs:
+     python3 stress_test.py --help
+
+--------------------------------------------------------------------
+ STEP 3 — ADD YOUR SERVER TO THE ALLOWLIST
+--------------------------------------------------------------------
+  The tool refuses any host not listed in allowlist.txt.
+  Add YOUR host (domain or IP), one per line:
+
+     echo "yoursite.com" >> allowlist.txt
+
+  localhost and private IPs (127.0.0.1, 192.168.x, 10.x) are always
+  allowed with no entry.
+
+--------------------------------------------------------------------
+ STEP 4 — RUN A TEST
+--------------------------------------------------------------------
+  Simple:
+     python3 stress_test.py https://yoursite.com/ --i-own-this
+
+  Find the breaking point automatically:
+     python3 stress_test.py https://yoursite.com/ --i-own-this \
+         --find-capacity --slo-p99 800 --slo-error-pct 2
+
+  Hard, all CPU cores, with an HTML report:
+     python3 stress_test.py https://yoursite.com/ --i-own-this \
+         --profile heavy --processes 8 --pipeline 16 --html report.html
+
+  Test a local server for a fixed time (live timer):
+     ./timed-test.sh http://localhost:3000/ 20000 60
+
+  Press Ctrl+C anytime to stop early — you still get a report.
+
+--------------------------------------------------------------------
+ GO FASTER (optional)
+--------------------------------------------------------------------
+  Raise the open-file limit (biggest speedup, esp. macOS):
+     ulimit -n 200000
+  Install the faster event loop, then add --uvloop to commands:
+     pip3 install uvloop
+
+--------------------------------------------------------------------
+ NOTE ON CDNs (Cloudflare, etc.)
+--------------------------------------------------------------------
+  If your site is behind Cloudflare or similar, you'll see it absorb
+  the load and return 429/403 — that's the protection working. This
+  is a single-source LOAD TESTER, not an attack tool: it has no
+  proxies, spoofing, or evasion, and won't get past DDoS protection.
+  To test your app, aim it at a dynamic route or your origin/localhost.
+
+  Full docs: see README.md
+====================================================================
