@@ -100,10 +100,37 @@ python3 stress_test.py https://script.ceo/ --i-own-this --config stages.example.
 --user-agent STR      Override the User-Agent.
 --report FILE         Write a JSON report.
 --html FILE           Write a self-contained HTML report with charts.
+--csv FILE            Write the per-second time-series to CSV (graph it anywhere).
+--slo-p95 MS          Fail the run (exit 1) if any stage's p95 latency exceeds MS.
+--slo-p99 MS          Fail the run (exit 1) if any stage's p99 latency exceeds MS.
+--slo-error-pct PCT   Fail the run (exit 1) if any stage's error rate exceeds PCT.
 --quiet               Hide the live progress line.
 ```
 
 Press **Ctrl+C** to stop early — you still get a report for the stages that ran.
+
+---
+
+## Capacity stress test (the "how much can it take" number)
+
+The point of a stress test is a number: the most traffic your box serves
+*healthily*. Set SLO thresholds and the run fails the moment a stage breaches
+them, and it prints the highest throughput that stayed at >=99% success:
+
+```bash
+python3 stress_test.py https://mybox.example/ --i-own-this \
+    --profile heavy --processes 4 --pipeline 16 \
+    --slo-p99 800 --slo-error-pct 1 \
+    --csv timeseries.csv --html report.html
+```
+
+- **SLO: PASS/FAIL** and exit code 0/1 — drop it straight into CI to catch
+  regressions ("fail the build if p99 > 800ms under load").
+- **"Highest sustained throughput at >=99% success: ~N req/s"** — your capacity.
+- **`--csv`** gives you the per-second series to graph anywhere.
+
+Point `--path` at your heaviest route (a DB query, a big dynamic page) to find
+the real limit — a static file will always look faster than your app actually is.
 
 ---
 

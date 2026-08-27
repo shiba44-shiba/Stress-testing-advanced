@@ -656,6 +656,43 @@ STAGES.forEach(s=>{const errs=s.http_errors_4xx_5xx+s.connection_failures;
         fh.write(doc)
 
 
+def write_csv(path, summaries):
+    import csv
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["stage", "second", "requests_in_second", "avg_latency_ms"])
+        for s in summaries:
+            for pt in s["series"]:
+                w.writerow([s["stage"], pt["t"], pt["rps"], pt["avg_ms"]])
+
+
+def evaluate_slo(summaries, slo_p95, slo_p99, slo_err):
+    """Return (passed, list_of_breach_strings) against the given thresholds."""
+    breaches = []
+    for s in summaries:
+        if not s["requests"]:
+            continue
+        err_pct = 100.0 - s["success_rate_pct"]
+        if slo_p95 and s["latency_ms"]["p95"] > slo_p95:
+            breaches.append(f"{s['stage']}: p95 {s['latency_ms']['p95']:.0f}ms > {slo_p95:.0f}ms")
+        if slo_p99 and s["latency_ms"]["p99"] > slo_p99:
+            breaches.append(f"{s['stage']}: p99 {s['latency_ms']['p99']:.0f}ms > {slo_p99:.0f}ms")
+        if slo_err and err_pct > slo_err:
+            breaches.append(f"{s['stage']}: errors {err_pct:.1f}% > {slo_err:.1f}%")
+    return (len(breaches) == 0), breaches
+
+
+def report_capacity(summaries):
+    """Print the highest stage that still stayed healthy — the practical capacity."""
+    healthy = [s for s in summaries
+               if s["requests"] and s["success_rate_pct"] >= 99.0]
+    if healthy:
+        best = max(healthy, key=lambda s: s["throughput_rps"])
+        print(f"  - Highest sustained throughput at >=99% success: "
+              f"~{best['throughput_rps']:.0f} req/s at '{best['stage']}' "
+              f"({best['workers']} concurrent, p95 {best['latency_ms']['p95']:.0f}ms).")
+
+
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
@@ -717,6 +754,13 @@ def main():
                          "throughput per socket on keep-alive servers.")
     ap.add_argument("--report", help="Write JSON report to this path.")
     ap.add_argument("--html", help="Write a self-contained HTML report.")
+    ap.add_argument("--csv", help="Write the per-second time-series to a CSV file.")
+    ap.add_argument("--slo-p95", type=float, default=0,
+                    help="Fail the run (exit 1) if any stage's p95 latency (ms) exceeds this.")
+    ap.add_argument("--slo-p99", type=float, default=0,
+                    help="Fail the run (exit 1) if any stage's p99 latency (ms) exceeds this.")
+    ap.add_argument("--slo-error-pct", type=float, default=0,
+                    help="Fail the run (exit 1) if any stage's error rate (%) exceeds this.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -801,6 +845,23 @@ def main():
         if args.html:
             write_html(args.html, args.url, profile_name, summaries, meta)
             print(f"HTML report -> {args.html}")
+        if args.csv:
+            write_csv(args.csv, summaries)
+            print(f"CSV time-series -> {args.csv}")
+
+        report_capacity(summaries)
+
+        if args.slo_p95 or args.slo_p99 or args.slo_error_pct:
+            passed, breaches = evaluate_slo(summaries, args.slo_p95,
+                                            args.slo_p99, args.slo_error_pct)
+            print()
+            if passed:
+                print("SLO: PASS - every stage stayed within the thresholds.")
+            else:
+                print("SLO: FAIL")
+                for b in breaches:
+                    print(f"  - {b}")
+                return 1
     return 0
 
 
