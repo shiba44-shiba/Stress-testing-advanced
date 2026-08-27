@@ -1,0 +1,4 @@
+stage,second,requests_in_second,avg_latency_ms
+open-loop,0,300,2.1
+open-loop,1,300,2.1
+open-loop,2,300,2.0
